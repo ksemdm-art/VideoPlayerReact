@@ -1,20 +1,26 @@
 import React, { useRef, useState, useEffect } from 'react';
 import {
   FaPlay, FaPause, FaVolumeUp, FaVolumeMute, FaExpand,
-} from 'react-icons/fa'; // пример иконок
-import { MdSlowMotionVideo } from 'react-icons/md'; // иконка скорости, по желанию
+} from 'react-icons/fa';
+import { MdSlowMotionVideo } from 'react-icons/md';
 
 function VideoPlayer({ src, markers = [] }) {
   const videoRef = useRef(null);
+  const containerRef = useRef(null);
   const progressBarRef = useRef(null);
   const timeDisplayRef = useRef(null);
-  const segmentRefs = useRef([]); // для заливки каждого сегмента
+  const segmentRefs = useRef([]);
   const clickTimeoutRef = useRef(null);
+  const fullscreenControlTimerRef = useRef(null);
+
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [segments, setSegments] = useState([]);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [muted, setMuted] = useState(false);
+
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showFullscreenControls, setShowFullscreenControls] = useState(true);
 
   // Для двойного клика с ускорением
   const lastDoubleTapTimeRef = useRef(0);
@@ -175,20 +181,63 @@ function VideoPlayer({ src, markers = [] }) {
     localStorage.setItem(`video-progress-${src}`, newTime);
   };
 
-  // Переход в полноэкранный режим
+  // Переход в полноэкранный режим через контейнер
   const handleFullScreen = () => {
-    if (!videoRef.current) return;
-    const container = videoRef.current.parentNode;
+    if (!containerRef.current) return;
     if (document.fullscreenElement) {
       document.exitFullscreen();
     } else {
-      container.requestFullscreen?.();
+      containerRef.current.requestFullscreen?.();
+    }
+  };
+
+  // Обработчик события изменения полноэкранного режима
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      if (document.fullscreenElement === containerRef.current) {
+        setIsFullscreen(true);
+        setShowFullscreenControls(true);
+        resetFullscreenControlTimer();
+      } else {
+        setIsFullscreen(false);
+        if (fullscreenControlTimerRef.current) {
+          clearTimeout(fullscreenControlTimerRef.current);
+          fullscreenControlTimerRef.current = null;
+        }
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () =>
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  // Сброс таймера скрытия панели в полноэкранном режиме
+  const resetFullscreenControlTimer = () => {
+    if (fullscreenControlTimerRef.current) {
+      clearTimeout(fullscreenControlTimerRef.current);
+    }
+    fullscreenControlTimerRef.current = setTimeout(() => {
+      setShowFullscreenControls(false);
+    }, 3000);
+  };
+
+  // При движении мыши или касании в полноэкранном режиме – показать панель и сбросить таймер
+  const handleFullscreenActivity = () => {
+    if (isFullscreen) {
+      setShowFullscreenControls(true);
+      resetFullscreenControlTimer();
     }
   };
 
   return (
-    <div style={{ maxWidth: 800, margin: '20px auto', fontFamily: 'Segoe UI, sans-serif' }}>
-      {/* Стили для сегментов и выпадающего списка */}
+    <div
+      style={{
+        maxWidth: 800,
+        width: '100%',
+        margin: '20px auto',
+        fontFamily: 'Segoe UI, sans-serif',
+      }}
+    >
       <style>{`
         .chapter-segment {
           position: absolute;
@@ -206,7 +255,7 @@ function VideoPlayer({ src, markers = [] }) {
         }
         .chapter-fill {
           height: 100%;
-          background-color:rgb(108, 134, 249);
+          background-color: rgb(108, 134, 249);
           width: 0%;
         }
         .chapter-tooltip {
@@ -238,8 +287,15 @@ function VideoPlayer({ src, markers = [] }) {
         }
       `}</style>
 
-      {/* Видео-контейнер без оверлеев */}
-      <div style={{ position: 'relative', borderRadius: 8, overflow: 'hidden' }} onClick={handleVideoClick} onDoubleClick={handleDoubleClick}>
+      {/* Контейнер видео + (при полноэкранном режиме) оверлей с элементами управления */}
+      <div
+        ref={containerRef}
+        style={{ position: 'relative', borderRadius: 8, overflow: 'hidden' }}
+        onClick={handleVideoClick}
+        onDoubleClick={handleDoubleClick}
+        onMouseMove={handleFullscreenActivity}
+        onTouchStart={handleFullscreenActivity}
+      >
         <video
           ref={videoRef}
           src={src}
@@ -248,111 +304,259 @@ function VideoPlayer({ src, markers = [] }) {
           onLoadedMetadata={handleLoadedMetadata}
           style={{ display: 'block', width: '100%' }}
         />
-      </div>
 
-      {/* Панель управления под видео */}
-      <div style={{ marginTop: '12px' }}>
-        {/* Прогресс-бар */}
-        <div
-          ref={progressBarRef}
-          style={{
-            position: 'relative',
-            height: '8px',
-            background: '#666',
-            borderRadius: '4px',
-            cursor: 'pointer',
-            overflow: 'visible',
-          }}
-          onClick={handleProgressBarClick}
-        >
-          {segments.map((seg, index) => {
-            const leftPercent = (seg.startTime / duration) * 100;
-            const widthPercent = ((seg.endTime - seg.startTime) / duration) * 100;
-            return (
-              <div
-                key={index}
-                className="chapter-segment"
-                style={{ left: `${leftPercent}%`, width: `${widthPercent}%` }}
-              >
-                <div className="chapter-fill" ref={(el) => (segmentRefs.current[index] = el)} />
-                <div className="chapter-tooltip">
-                  {seg.label} ({formatTime(seg.startTime)})
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Панель управления */}
-        <div
-          style={{
-            marginTop: '8px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            background: 'rgba(0,0,0,0.7)',
-            padding: '8px 12px',
-            borderRadius: '8px',
-          }}
-        >
-          {/* Время */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '14px', color: '#fff' }}>
-            <span ref={timeDisplayRef}>0:00</span>
-            <span>/ {formatTime(duration)}</span>
-          </div>
-
-          {/* Элементы управления */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <button
-              onClick={togglePlay}
+        {/* Оверлей панели управления для полноэкранного режима */}
+        {isFullscreen && showFullscreenControls && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              right: 0,
+              background: 'rgba(0,0,0,0.7)',
+              padding: '8px 12px',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            {/* Прогресс-бар */}
+            <div
+              ref={progressBarRef}
               style={{
-                background: 'none',
-                border: 'none',
-                color: '#fff',
+                position: 'relative',
+                height: '8px',
+                background: '#666',
+                borderRadius: '4px',
                 cursor: 'pointer',
-                fontSize: '18px',
+                overflow: 'visible',
               }}
+              onClick={handleProgressBarClick}
             >
-              {isPlaying ? <FaPause /> : <FaPlay />}
-            </button>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#fff' }}>
-              <MdSlowMotionVideo size={18} />
-              <select className="speed-select" value={playbackRate} onChange={handleSpeedChange}>
-                <option value={0.5}>0.5x</option>
-                <option value={1}>1x</option>
-                <option value={1.25}>1.25x</option>
-                <option value={1.5}>1.5x</option>
-                <option value={2}>2x</option>
-              </select>
+              {segments.map((seg, index) => {
+                const leftPercent = (seg.startTime / duration) * 100;
+                const widthPercent =
+                  ((seg.endTime - seg.startTime) / duration) * 100;
+                return (
+                  <div
+                    key={index}
+                    className="chapter-segment"
+                    style={{
+                      left: `${leftPercent}%`,
+                      width: `${widthPercent}%`,
+                    }}
+                  >
+                    <div
+                      className="chapter-fill"
+                      ref={(el) => (segmentRefs.current[index] = el)}
+                    />
+                    <div className="chapter-tooltip">
+                      {seg.label} ({formatTime(seg.startTime)})
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <button
-              onClick={toggleMute}
+            {/* Панель управления */}
+            <div
               style={{
-                background: 'none',
-                border: 'none',
-                color: '#fff',
-                cursor: 'pointer',
-                fontSize: '18px',
+                marginTop: '8px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
               }}
             >
-              {muted ? <FaVolumeMute /> : <FaVolumeUp />}
-            </button>
-            <button
-              onClick={handleFullScreen}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  fontSize: '14px',
+                  color: '#fff',
+                }}
+              >
+                <span ref={timeDisplayRef}>0:00</span>
+                <span>/ {formatTime(duration)}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button
+                  onClick={togglePlay}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#fff',
+                    cursor: 'pointer',
+                    fontSize: '18px',
+                  }}
+                >
+                  {isPlaying ? <FaPause /> : <FaPlay />}
+                </button>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    color: '#fff',
+                  }}
+                >
+                  <MdSlowMotionVideo size={18} />
+                  <select
+                    className="speed-select"
+                    value={playbackRate}
+                    onChange={handleSpeedChange}
+                  >
+                    <option value={0.5}>0.5x</option>
+                    <option value={1}>1x</option>
+                    <option value={1.25}>1.25x</option>
+                    <option value={1.5}>1.5x</option>
+                    <option value={2}>2x</option>
+                  </select>
+                </div>
+                <button
+                  onClick={toggleMute}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#fff',
+                    cursor: 'pointer',
+                    fontSize: '18px',
+                  }}
+                >
+                  {muted ? <FaVolumeMute /> : <FaVolumeUp />}
+                </button>
+                <button
+                  onClick={handleFullScreen}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#fff',
+                    cursor: 'pointer',
+                    fontSize: '18px',
+                  }}
+                >
+                  <FaExpand />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Обычная панель управления (не в полноэкранном режиме) */}
+      {!isFullscreen && (
+        <div style={{ marginTop: '12px' }}>
+          <div
+            ref={progressBarRef}
+            style={{
+              position: 'relative',
+              height: '8px',
+              background: '#666',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              overflow: 'visible',
+            }}
+            onClick={handleProgressBarClick}
+          >
+            {segments.map((seg, index) => {
+              const leftPercent = (seg.startTime / duration) * 100;
+              const widthPercent =
+                ((seg.endTime - seg.startTime) / duration) * 100;
+              return (
+                <div
+                  key={index}
+                  className="chapter-segment"
+                  style={{
+                    left: `${leftPercent}%`,
+                    width: `${widthPercent}%`,
+                  }}
+                >
+                  <div
+                    className="chapter-fill"
+                    ref={(el) => (segmentRefs.current[index] = el)}
+                  />
+                  <div className="chapter-tooltip">
+                    {seg.label} ({formatTime(seg.startTime)})
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div
+            style={{
+              marginTop: '8px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              background: 'rgba(0,0,0,0.7)',
+              padding: '8px 12px',
+              borderRadius: '8px',
+            }}
+          >
+            <div
               style={{
-                background: 'none',
-                border: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontSize: '14px',
                 color: '#fff',
-                cursor: 'pointer',
-                fontSize: '18px',
               }}
             >
-              <FaExpand />
-            </button>
+              <span ref={timeDisplayRef}>0:00</span>
+              <span>/ {formatTime(duration)}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <button
+                onClick={togglePlay}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  fontSize: '18px',
+                }}
+              >
+                {isPlaying ? <FaPause /> : <FaPlay />}
+              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#fff' }}>
+                <MdSlowMotionVideo size={18} />
+                <select className="speed-select" value={playbackRate} onChange={handleSpeedChange}>
+                  <option value={0.5}>0.5x</option>
+                  <option value={1}>1x</option>
+                  <option value={1.25}>1.25x</option>
+                  <option value={1.5}>1.5x</option>
+                  <option value={2}>2x</option>
+                </select>
+              </div>
+              <button
+                onClick={toggleMute}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  fontSize: '18px',
+                }}
+              >
+                {muted ? <FaVolumeMute /> : <FaVolumeUp />}
+              </button>
+              <button
+                onClick={handleFullScreen}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  fontSize: '18px',
+                }}
+              >
+                <FaExpand />
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
+
 export default VideoPlayer;
